@@ -1,0 +1,15 @@
+{
+    "version": "1.0.0",
+    "configurations": [
+        {
+            "name": "Debug SurfSander",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/surfsander/cli.py",
+            "console": "integratedTerminal",
+            "args": [
+                "${workspaceFolder}/test/input/doi_voxelisation.npz",
+            ]
+        }
+    ]
+}
