@@ -9,6 +9,7 @@ from rich_argparse import RichHelpFormatter
 install(show_locals=True)
 
 from surfsander.common import UserError, console
+from surfsander.smoothing import AlgConfig, local_smoothing
 
 class RichArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
@@ -43,6 +44,12 @@ def build_parser() -> RichArgumentParser:
         type=str,
         default=None,
         help="Name of the output file without suffix",
+    )
+    parser.add_argument(
+        "--unit-size",
+        type=float,
+        default=1.0,
+        help="Physical size of one unit in mm (default: %(default)s).",
     )
 
     return parser
@@ -83,14 +90,13 @@ def main() -> int:
         input_path = resolve_input(args.input)
         output_path = resolve_output(input_path, args.output_dir, args.name)
 
+        alg_config = AlgConfig(input_path, output_path, args.unit_size)
+
+        return local_smoothing(alg_config)
+
     except UserError as e:
         console.print(f"[bold red]✖ Error:[/bold red] {e}")
         raise SystemExit(1)
-
-    print(input_path)
-    print(output_path)
-
-    return 0
 
 
 if __name__ == "__main__":
