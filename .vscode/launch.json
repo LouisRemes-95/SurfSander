@@ -8,7 +8,8 @@
             "program": "${workspaceFolder}/src/surfsander/cli.py",
             "console": "integratedTerminal",
             "args": [
-                "${workspaceFolder}/test/input/doi_voxelisation.npz",
+                "${workspaceFolder}/test/input/doi_voxelisation.ply",
+                "--output-dir", "${workspaceFolder}/test/output"
             ]
         }
     ]

@@ -44,6 +44,9 @@ def build_iso_surface(input_path: Path, unit_size: float) -> trimesh:
                     process=True,
                 )
 
+        case ".ply":
+            return trimesh.load_mesh(input_path)
+
         case _:
             raise UserError(
                 f"Unsupported input format '{input_path.suffix}'. "
