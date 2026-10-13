@@ -58,7 +58,7 @@ def build_parser() -> RichArgumentParser:
 def resolve_input(path: Path) -> Path:
     path = path.resolve()
     if not path.exists() or not path.is_file():
-        raise UserError("input_dir must be an existing directory")
+        raise UserError("input_path must be an existing file")
     return path
 
 def resolve_output(input_path: Path, output_dir: Path | None, name: str | None) -> Path:

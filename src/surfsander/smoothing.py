@@ -42,7 +42,7 @@ def build_iso_surface(input_path: Path, unit_size: float) -> trimesh:
                 return trimesh.Trimesh(
                     vertices=vertices,
                     faces=faces,
-                    process=True,
+                    process=False,
                 )
 
         case ".ply":
