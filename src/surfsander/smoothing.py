@@ -8,6 +8,7 @@ from skimage.filters import threshold_otsu
 from skimage.measure import marching_cubes
 
 from surfsander.common import UserError, console
+from surfsander.surface_state import SurfaceState
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,6 @@ def build_iso_surface(input_path: Path, unit_size: float) -> trimesh:
 
 
 def local_smoothing(alg_config: AlgConfig) -> int:
-    iso_surface = build_iso_surface(alg_config.input_dir, alg_config.unit_size)
+    surface_state = SurfaceState(build_iso_surface(alg_config.input_dir, alg_config.unit_size))
 
-    iso_surface.export(alg_config.output_dir.with_suffix(".ply"))
+    surface_state.mesh.export(alg_config.output_dir.with_suffix(".ply"))
