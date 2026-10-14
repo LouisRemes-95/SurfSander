@@ -16,7 +16,7 @@ class SurfaceState:
 
     def __post_init__(self) -> None:
         self._remove_duplicate_faces()
-        self.remove_multifolds()
+        self._remove_multifolds()
 
         n_vertices = len(self.mesh.vertices)
         n_edges = len(self.mesh.edges_unique)
@@ -34,7 +34,7 @@ class SurfaceState:
 
         self.mesh.remove_unreferenced_vertices()
 
-    def remove_multifolds(self) -> None:
+    def _remove_multifolds(self) -> None:
         vertices = self.mesh.vertices.copy()
         faces = self.mesh.faces.copy()
 
