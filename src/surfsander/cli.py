@@ -63,6 +63,12 @@ def build_parser() -> RichArgumentParser:
         default=None,
         help="Maximum allowed K2 curvature in mm⁻¹",
     )
+    parser.add_argument(
+        "--adaptive-zoom",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Adaptive zooming on the voxelisation",
+    )
 
     return parser
 
@@ -102,7 +108,7 @@ def main() -> int:
         input_path = resolve_input(args.input)
         output_path = resolve_output(input_path, args.output_dir, args.name)
 
-        alg_config = AlgConfig(input_path, output_path, args.voxel_size, args.k1_max, args.k2_max)
+        alg_config = AlgConfig(input_path, output_path, args.voxel_size, args.k1_max, args.k2_max, args.adaptive_zoom)
 
         return local_smoothing(alg_config)
 

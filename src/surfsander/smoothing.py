@@ -21,6 +21,11 @@ class AlgConfig:
     voxel_size: float
     k1_max: float | None
     k2_max: float | None
+    adaptive_zoom: bool
+
+    def __post_init__(self) -> None:
+        if self.k1_max is not None and self.k2_max is not None and self.k2_max > self.k1_max:
+            raise UserError(f"k2_max ({self.k2_max} [mm⁻¹]) cannot be greater than k1_max ({self.k1_max} [mm⁻¹])")
 
 
 def build_iso_surface(alg_config: AlgConfig) -> trimesh:
@@ -28,11 +33,11 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
 
     zoom_factor = 1
 
-    if alg_config.k2_max is not None:
-        zoom_factor = alg_config.k2_max / 2 * alg_config.voxel_size
+    if alg_config.adaptive_zoom:
+        k_max = alg_config.k1_max if alg_config.k1_max is not None else alg_config.k2_max
 
-    if alg_config.k1_max is not None:
-        zoom_factor = alg_config.k1_max / 2 * alg_config.voxel_size
+        if k_max is not None:
+            zoom_factor = k_max * alg_config.voxel_size / 2
 
     voxelisation = zoom(voxelisation, zoom_factor, order=2)
 
