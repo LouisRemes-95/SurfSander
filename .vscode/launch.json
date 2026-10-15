@@ -9,7 +9,10 @@
             "console": "integratedTerminal",
             "args": [
                 "${workspaceFolder}/test/input/doi_voxelisation.npz",
-                "--output-dir", "${workspaceFolder}/test/output"
+                "--output-dir", "${workspaceFolder}/test/output",
+                "--voxel-size", "0.005",
+                "--k1-max", "140",
+                "--k2-max", "70",
             ]
         }
     ]

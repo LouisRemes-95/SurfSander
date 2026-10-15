@@ -46,10 +46,22 @@ def build_parser() -> RichArgumentParser:
         help="Name of the output file without suffix",
     )
     parser.add_argument(
-        "--unit-size",
+        "--voxel-size",
         type=float,
         default=1.0,
-        help="Physical size of one unit in mm (default: %(default)s).",
+        help="Physical size of one voxel dimension in mm (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--k1-max",
+        type=float,
+        default=None,
+        help="Maximum allowed K1 curvature in mm⁻¹",
+    )
+    parser.add_argument(
+        "--k2-max",
+        type=float,
+        default=None,
+        help="Maximum allowed K2 curvature in mm⁻¹",
     )
 
     return parser
@@ -90,7 +102,7 @@ def main() -> int:
         input_path = resolve_input(args.input)
         output_path = resolve_output(input_path, args.output_dir, args.name)
 
-        alg_config = AlgConfig(input_path, output_path, args.unit_size)
+        alg_config = AlgConfig(input_path, output_path, args.voxel_size, args.k1_max, args.k2_max)
 
         return local_smoothing(alg_config)
 
