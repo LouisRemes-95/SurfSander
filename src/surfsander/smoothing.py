@@ -39,7 +39,7 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
         if k_max is not None:
             zoom_factor = k_max * alg_config.voxel_size / 2
 
-    voxelisation = zoom(voxelisation, zoom_factor, order=2)
+    voxelisation = zoom(voxelisation, zoom_factor, order=1)
 
     binary = voxelisation > threshold_otsu(voxelisation)
     well_composed_binary, _ = make_well_composed(binary)

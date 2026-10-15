@@ -15,12 +15,40 @@ class SurfaceState:
     _k2: np.ndarray = field(init=False)
 
     def __post_init__(self) -> None:
+        self._remove_small_clusters()
+        self._set_boundaries()
+
         n_vertices = len(self.mesh.vertices)
         n_edges = len(self.mesh.edges_unique)
 
         self._edge_tagging = np.zeros(n_edges, dtype=bool)
         self._k1 = np.zeros(n_vertices, dtype=np.float64)
         self._k2 = np.zeros(n_vertices, dtype=np.float64)
+
+    def _remove_small_clusters(self, min_faces: float | None = None) -> None:
+        n_faces = len(self.mesh.faces)
+
+        if min_faces is None:
+            min_faces = max(n_faces * 0.001, 4)
+
+        components = trimesh.graph.connected_components(self.mesh.face_adjacency, nodes=np.arange(n_faces))
+
+        faces_to_keep = np.concatenate([component for component in components if len(component) > min_faces])
+
+        self.mesh.update_faces(faces_to_keep)
+        self.mesh.remove_unreferenced_vertices()
+
+    def _set_boundaries(self) -> None:
+        vertices = self.mesh.vertices
+        bounds = self.mesh.bounds
+
+        tags = np.zeros(len(vertices), dtype=np.uint8)
+
+        for axis in range(3):
+            tags |= ((vertices[:, axis] == bounds[0, axis]).astype(np.uint8) << (2 * axis))
+            tags |= ((vertices[:, axis] == bounds[1, axis]).astype(np.uint8) << (2 * axis + 1))
+
+        self.mesh.vertex_attributes["boundary_tag"] = tags
 
     def _remove_multifolds(self) -> None:
         vertices = self.mesh.vertices.copy()
