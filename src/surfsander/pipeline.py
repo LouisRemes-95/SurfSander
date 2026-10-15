@@ -10,7 +10,7 @@ from skimage.measure import marching_cubes
 from scipy.ndimage import zoom
 
 from surfsander.common import UserError, console
-from surfsander.surface_state import SurfaceState
+from surfsander.surface import Surface
 from surfsander.voxelisation_correction import make_well_composed
 
 
@@ -41,12 +41,16 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
 
     voxelisation = zoom(voxelisation, zoom_factor, order=1)
 
-    binary = voxelisation > threshold_otsu(voxelisation)
+    threshold = threshold_otsu(voxelisation)
+    binary = voxelisation > threshold
     well_composed_binary, _ = make_well_composed(binary)
 
+    voxelisation[well_composed_binary & ~ binary] = threshold * 1.01
+    voxelisation[~ well_composed_binary & binary] = threshold * .99
+
     vertices, faces, _, _ = marching_cubes(
-        well_composed_binary,
-        level=0.5,
+        voxelisation,
+        level=threshold,
         spacing=(alg_config.voxel_size / zoom_factor,) * 3,
         allow_degenerate=False,
     )
@@ -74,7 +78,14 @@ def _load_voxelisation(input_path: Path) -> np.ndarray:
     return voxelisation
 
 
-def local_smoothing(alg_config: AlgConfig) -> int:
-    surface_state = SurfaceState(build_iso_surface(alg_config))
+def run(alg_config: AlgConfig) -> int:
+    surface_state = Surface(build_iso_surface(alg_config))
+
+    surface_state.locally_smooth(
+        k1_max=alg_config.k1_max,
+        k2_max=alg_config.k2_max,
+    )
 
     surface_state.mesh.export(alg_config.output_dir.with_suffix(".ply"))
+
+    return 0

@@ -9,7 +9,7 @@ from rich_argparse import RichHelpFormatter
 install(show_locals=True)
 
 from surfsander.common import UserError, console
-from surfsander.smoothing import AlgConfig, local_smoothing
+from surfsander.pipeline import AlgConfig, run
 
 class RichArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
@@ -110,7 +110,7 @@ def main() -> int:
 
         alg_config = AlgConfig(input_path, output_path, args.voxel_size, args.k1_max, args.k2_max, args.adaptive_zoom)
 
-        return local_smoothing(alg_config)
+        return run(alg_config)
 
     except UserError as e:
         console.print(f"[bold red]✖ Error:[/bold red] {e}")

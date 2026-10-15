@@ -247,7 +247,7 @@ def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
 
     # Phase 1: Greedy correction
     with Progress(
-        TextColumn("[cyan]Correcting voxel topology"),
+        TextColumn("[cyan]Enforcing well-composedness — Critical configurations resolved:"),
         BarColumn(),
         TextColumn("{task.completed:,.0f}/{task.total:,.0f} resolved"),
         TimeElapsedColumn(),
