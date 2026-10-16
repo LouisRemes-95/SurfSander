@@ -82,8 +82,8 @@ def run(alg_config: AlgConfig) -> int:
     surface_state = Surface(build_iso_surface(alg_config))
 
     surface_state.locally_smooth(
-        k1_max=alg_config.k1_max,
-        k2_max=alg_config.k2_max,
+        k1_max=alg_config.k1_max or float("inf"),
+        k2_max=alg_config.k2_max or float("inf"),
     )
 
     surface_state.mesh.export(alg_config.output_dir.with_suffix(".ply"))

@@ -1,14 +1,13 @@
-from dataclasses import dataclass, field
+import heapq
+from collections import defaultdict, deque
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 
 import numpy as np
 import trimesh
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from surfsander.common import console
-
-import heapq
-from collections import defaultdict, deque
 
 
 class _DynamicTopology:
@@ -28,6 +27,7 @@ class _DynamicTopology:
         self.vertex_faces = [set() for _ in self.vertices]
         self.edge_faces = defaultdict(set)
         self.tagged_edges = {tuple(map(int, edge)) for edge, tagged in zip(surface.mesh.edges_unique, surface._edge_tagging) if tagged}
+        self.parked_edges = set()
         self.lengths = {}
         self.versions = defaultdict(int)
         self.min_heap = []
@@ -57,26 +57,36 @@ class _DynamicTopology:
             if not self.edge_faces[edge]:
                 del self.edge_faces[edge]
 
-    def _refresh(self, edges):
+    def _refresh(self, edges, moved_vertices=()):
         for edge in edges:
-            old_length = self.lengths.pop(edge, None)
-            if old_length is not None:
-                self.length_sum -= old_length
+            exists = edge in self.edge_faces
+            previous = self.lengths.get(edge)
+
+            # Only new, removed or geometrically changed edges need refreshing.
+            if exists and previous is not None and edge[0] not in moved_vertices and edge[1] not in moved_vertices:
+                continue
+
+            if previous is not None:
+                self.length_sum -= self.lengths.pop(edge)
 
             self.versions[edge] += 1
-            if edge not in self.edge_faces:
+
+            if not exists:
                 self.tagged_edges.discard(edge)
+                self.parked_edges.discard(edge)
                 continue
 
             a, b = edge
             length = float(np.sqrt(np.dot((self.vertices[a] - self.vertices[b]) ** 2, [1, 1, 1])))
             self.lengths[edge] = length
             self.length_sum += length
+
             version = self.versions[edge]
-            heapq.heappush(self.min_heap, (length, edge, version))
+            if edge not in self.parked_edges:
+                heapq.heappush(self.min_heap, (length, edge, version))
             heapq.heappush(self.max_heap, (-length, edge, version))
 
-    def _replace_faces(self, replacements, additions=()):
+    def _replace_faces(self, replacements, additions=(), moved_vertices=()):
         affected = set()
         for index, face in replacements.items():
             previous = self.faces[index]
@@ -95,7 +105,17 @@ class _DynamicTopology:
             self._attach(index, face)
             affected.update(self._edges(face))
 
-        self._refresh(affected)
+        self._refresh(affected, moved_vertices=moved_vertices)
+
+    def _reset_edge_tags(self):
+        # Reconsider parked edges only when MATLAB resets edge tagging.
+        self.tagged_edges.clear()
+
+        for edge in self.parked_edges:
+            if edge in self.lengths:
+                heapq.heappush(self.min_heap, (self.lengths[edge], edge, self.versions[edge]))
+
+        self.parked_edges.clear()
 
     def _append_vertex(self, vertex, tag, k1=0.0, k2=0.0):
         index = len(self.vertices)
@@ -111,7 +131,7 @@ class _DynamicTopology:
 
     def next_edge(self, shortest, threshold):
         heap = self.min_heap if shortest else self.max_heap
-        skipped = []
+
         while heap:
             priority, edge, version = heap[0]
             if self.versions[edge] != version or edge not in self.lengths:
@@ -120,18 +140,16 @@ class _DynamicTopology:
 
             length = self.lengths[edge]
             if (length >= threshold) if shortest else (length <= threshold):
-                break
+                return None
 
             if shortest and edge in self.tagged_edges:
-                skipped.append(heapq.heappop(heap))
+                # Keep rejected edges out of the active heap until tags reset.
+                self.parked_edges.add(edge)
+                heapq.heappop(heap)
                 continue
 
-            for item in skipped:
-                heapq.heappush(heap, item)
             return edge
 
-        for item in skipped:
-            heapq.heappush(heap, item)
         return None
 
     def remaining(self, low, high):
@@ -151,7 +169,7 @@ class _DynamicTopology:
 
         self._replace_faces(replacements, additions)
         # MATLAB's long-edge handling resets edge tags.
-        self.tagged_edges.clear()
+        self._reset_edge_tags()
 
     def _pipe_candidates(self, edge):
         a, b = edge
@@ -215,8 +233,8 @@ class _DynamicTopology:
 
         self.vertices[a] = midpoint
         self.tags[a] |= self.tags[b]
-        self._replace_faces(replacements)
-        self._refresh(set(key for key in self.edge_faces if a in key))
+        # Update the modified neighborhood in one pass, including moved edges.
+        self._replace_faces(replacements, moved_vertices={a})
         self._dissociate_vertex(a)
         return "collapsed"
 
@@ -911,7 +929,7 @@ class Surface:
             transient=True,
         ) as progress:
             self._progress = progress
-            iteration_task = progress.add_task("Curvature smoothing", total=None, unit="iterations")
+            iteration_task = progress.add_task("Full smoothing iterations", total=None, unit="iterations")
 
             try:
                 while np.any((np.abs(self._k1) > k1_max) | (np.abs(self._k2) > k2_max)):
@@ -935,4 +953,8 @@ class Surface:
                 self._progress = None
                 self._stage_task = None
 
+        iterations = int(progress.tasks[iteration_task].completed)
+        console.print(
+            f"[green]✔ Local smoothing converged after {iterations:,} full smoothing iterations.[/green]"
+        )
         return True

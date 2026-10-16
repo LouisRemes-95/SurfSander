@@ -305,7 +305,7 @@ def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
 
     console.print(
         f"[green]✔ Well-composedness achieved in {n_flips:,} voxel flips[/green] "
-        f"({n_greedy:,} greedy + {n_fallback:,} fallback)"
+        f"[white]({n_greedy:,} greedy + {n_fallback:,} fallback)[/white]"
     )
 
     return volume, n_flips
