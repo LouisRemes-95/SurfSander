@@ -190,7 +190,7 @@ def finish_well_composedness(volume: np.ndarray) -> int:
                     queue.append(key)
                     pending.add(key)
 
-    with console.status("[cyan]Resolving remaining critical configurations..."):
+    with console.status("Resolving remaining critical configurations..."):
         while queue:
             config_id, origin = queue.popleft()
             pending.remove((config_id, origin))
@@ -232,7 +232,7 @@ def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
     if volume.ndim != 3:
         raise ValueError("Expected a 3D binary volume.")
 
-    with console.status("[cyan]Computing initial flip scores..."):
+    with console.status("Computing initial flip scores..."):
         scores = compute_flip_scores(volume)
         n_initial = count_critical_configurations(volume)
 
@@ -247,7 +247,7 @@ def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
 
     # Phase 1: Greedy correction
     with Progress(
-        TextColumn("[cyan]Enforcing well-composedness — Critical configurations resolved:"),
+        TextColumn("Enforcing well-composedness — Critical configurations resolved:"),
         BarColumn(),
         TextColumn("{task.completed:,.0f}/{task.total:,.0f} resolved"),
         TimeElapsedColumn(),
@@ -291,11 +291,11 @@ def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
     n_fallback = 0
 
     if n_remaining:
-        with console.status("[cyan]Applying guaranteed repair..."):
+        with console.status("Applying guaranteed repair..."):
             n_fallback = finish_well_composedness(volume)
 
     # Final validation
-    with console.status("[cyan]Validating voxel topology..."):
+    with console.status("Validating voxel topology..."):
         remaining = count_critical_configurations(volume)
 
     if remaining:

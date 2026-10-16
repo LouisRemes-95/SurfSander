@@ -10,6 +10,17 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from surfsander.common import console
 
 
+class CustomBarColumn(BarColumn):
+    def render(self, task):
+        if task.total is None:
+            self.complete_style = "white"
+            self.pulse_style = "white"
+        else:
+            self.complete_style = "blue"
+            self.pulse_style = "blue"
+        return super().render(task)
+    
+
 class _DynamicTopology:
     """Mutable triangle connectivity for local split/collapse operations.
 
@@ -624,8 +635,12 @@ class Surface:
         # Reuse the smoothing display when available.
         standalone = self._progress is None
         context = Progress(
-            TextColumn("[cyan]{task.description}"),
-            BarColumn(),
+            TextColumn("{task.description}"),
+            BarColumn(
+                complete_style="blue",
+                finished_style="blue",
+                pulse_style="blue",
+            ),
             TextColumn("{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
             console=console,
@@ -921,8 +936,12 @@ class Surface:
         self._compute_curvatures()
 
         with Progress(
-            TextColumn("[cyan]{task.description}"),
-            BarColumn(),
+            TextColumn("{task.description}"),
+            CustomBarColumn(
+                complete_style="blue",
+                finished_style="blue",
+                pulse_style="blue",
+            ),
             TextColumn("{task.completed:,.0f} {task.fields[unit]}"),
             TimeElapsedColumn(),
             console=console,

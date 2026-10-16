@@ -55,19 +55,19 @@ def build_parser() -> RichArgumentParser:
         "--k1-max",
         type=float,
         default=None,
-        help="Maximum allowed K1 curvature in mm⁻¹",
+        help="Maximum allowed K1 curvature \[mm⁻¹] (default: None)",
     )
     parser.add_argument(
         "--k2-max",
         type=float,
         default=None,
-        help="Maximum allowed K2 curvature in mm⁻¹",
+        help="Maximum allowed K2 curvature \[mm⁻¹] (default: None)",
     )
     parser.add_argument(
         "--adaptive-zoom",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Adaptive zooming on the voxelisation",
+        help="Adaptive zooming on the voxelisation (default: adaptive)",
     )
 
     return parser
@@ -87,7 +87,7 @@ def resolve_output(input_path: Path, output_dir: Path | None, name: str | None) 
     if name is None:
         name = input_path.name.removesuffix("".join(input_path.suffixes))
 
-    return output_dir / name
+    return (output_dir / name).with_suffix(".ply")
 
 
 def main() -> int:
@@ -96,7 +96,7 @@ def main() -> int:
     console.print(
         Panel(
             "[bold cyan]SurfSander[/bold cyan]\n"
-            "[dim]Curvature-driven surface smoothing[/dim]",
+            "Curvature-driven surface smoothing",
             border_style="cyan",
             expand=False,
         )

@@ -17,7 +17,7 @@ from surfsander.voxelisation_correction import make_well_composed
 @dataclass(frozen=True)
 class AlgConfig:
     input_path: Path
-    output_dir: Path
+    output_path: Path
     voxel_size: float
     k1_max: float | None
     k2_max: float | None
@@ -79,13 +79,20 @@ def _load_voxelisation(input_path: Path) -> np.ndarray:
 
 
 def run(alg_config: AlgConfig) -> int:
-    surface_state = Surface(build_iso_surface(alg_config))
+    surface = Surface(build_iso_surface(alg_config))
 
-    surface_state.locally_smooth(
+    surface.locally_smooth(
         k1_max=alg_config.k1_max or float("inf"),
         k2_max=alg_config.k2_max or float("inf"),
     )
 
-    surface_state.mesh.export(alg_config.output_dir.with_suffix(".ply"))
+    with console.status("Writing outputs..."):
+        surface.mesh.export(alg_config.output_path)
 
+    try:
+        rel = alg_config.output_path.relative_to(Path.cwd())
+    except ValueError:
+        rel = alg_config.output_path  # fallback to absolute path
+    console.print(f"💾 Wrote {rel} as output", highlight=False)
+    
     return 0
