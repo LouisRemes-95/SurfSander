@@ -2,7 +2,7 @@ import numpy as np
 import trimesh
 
 a = trimesh.load("test/output/doi_voxelisation.ply", process=False)
-b = trimesh.load("test/output/doi_voxelisation_initial.ply", process=False)
+b = trimesh.load("test/output/doi_voxelisation_working_version.ply", process=False)
 
 print("Vertices:", len(a.vertices), len(b.vertices))
 print("Faces:   ", len(a.faces), len(b.faces))

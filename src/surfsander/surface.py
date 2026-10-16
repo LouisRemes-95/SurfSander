@@ -1,10 +1,240 @@
 from dataclasses import dataclass, field
+from contextlib import nullcontext
 
 import numpy as np
 import trimesh
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from surfsander.common import console
+
+import heapq
+from collections import defaultdict, deque
+
+
+class _DynamicTopology:
+    """Mutable triangle connectivity for local split/collapse operations.
+
+    Vertex and face IDs remain stable until ``to_arrays`` compacts the mesh.
+    Edge priorities are updated only in modified neighborhoods.
+    """
+
+    def __init__(self, surface: "Surface") -> None:
+        self.vertices = [point.copy() for point in np.asarray(surface.mesh.vertices)]
+        self.faces = [tuple(map(int, face)) for face in surface.mesh.faces]
+        self.tags = list(map(int, surface.mesh.vertex_attributes["boundary_tag"]))
+        self.k1 = list(map(float, surface._k1))
+        self.k2 = list(map(float, surface._k2))
+
+        self.vertex_faces = [set() for _ in self.vertices]
+        self.edge_faces = defaultdict(set)
+        self.tagged_edges = {tuple(map(int, edge)) for edge, tagged in zip(surface.mesh.edges_unique, surface._edge_tagging) if tagged}
+        self.lengths = {}
+        self.versions = defaultdict(int)
+        self.min_heap = []
+        self.max_heap = []
+        self.length_sum = 0.0
+
+        for index, face in enumerate(self.faces):
+            self._attach(index, face)
+        self._refresh(set(self.edge_faces))
+
+    @staticmethod
+    def _edges(face):
+        a, b, c = face
+        return (tuple(sorted((a, b))), tuple(sorted((b, c))), tuple(sorted((c, a))))
+
+    def _attach(self, index, face):
+        for vertex in face:
+            self.vertex_faces[vertex].add(index)
+        for edge in self._edges(face):
+            self.edge_faces[edge].add(index)
+
+    def _detach(self, index, face):
+        for vertex in face:
+            self.vertex_faces[vertex].discard(index)
+        for edge in self._edges(face):
+            self.edge_faces[edge].discard(index)
+            if not self.edge_faces[edge]:
+                del self.edge_faces[edge]
+
+    def _refresh(self, edges):
+        for edge in edges:
+            old_length = self.lengths.pop(edge, None)
+            if old_length is not None:
+                self.length_sum -= old_length
+
+            self.versions[edge] += 1
+            if edge not in self.edge_faces:
+                self.tagged_edges.discard(edge)
+                continue
+
+            a, b = edge
+            length = float(np.sqrt(np.dot((self.vertices[a] - self.vertices[b]) ** 2, [1, 1, 1])))
+            self.lengths[edge] = length
+            self.length_sum += length
+            version = self.versions[edge]
+            heapq.heappush(self.min_heap, (length, edge, version))
+            heapq.heappush(self.max_heap, (-length, edge, version))
+
+    def _replace_faces(self, replacements, additions=()):
+        affected = set()
+        for index, face in replacements.items():
+            previous = self.faces[index]
+            if previous is not None:
+                affected.update(self._edges(previous))
+                self._detach(index, previous)
+            self.faces[index] = tuple(map(int, face)) if face is not None else None
+            if face is not None:
+                self._attach(index, self.faces[index])
+                affected.update(self._edges(self.faces[index]))
+
+        for face in additions:
+            face = tuple(map(int, face))
+            index = len(self.faces)
+            self.faces.append(face)
+            self._attach(index, face)
+            affected.update(self._edges(face))
+
+        self._refresh(affected)
+
+    def _append_vertex(self, vertex, tag, k1=0.0, k2=0.0):
+        index = len(self.vertices)
+        self.vertices.append(np.asarray(vertex, dtype=np.float64).copy())
+        self.tags.append(int(tag))
+        self.k1.append(float(k1))
+        self.k2.append(float(k2))
+        self.vertex_faces.append(set())
+        return index
+
+    def mean_length(self):
+        return self.length_sum / len(self.lengths) if self.lengths else 0.0
+
+    def next_edge(self, shortest, threshold):
+        heap = self.min_heap if shortest else self.max_heap
+        skipped = []
+        while heap:
+            priority, edge, version = heap[0]
+            if self.versions[edge] != version or edge not in self.lengths:
+                heapq.heappop(heap)
+                continue
+
+            length = self.lengths[edge]
+            if (length >= threshold) if shortest else (length <= threshold):
+                break
+
+            if shortest and edge in self.tagged_edges:
+                skipped.append(heapq.heappop(heap))
+                continue
+
+            for item in skipped:
+                heapq.heappush(heap, item)
+            return edge
+
+        for item in skipped:
+            heapq.heappush(heap, item)
+        return None
+
+    def remaining(self, low, high):
+        return sum(length < low or length > high for length in self.lengths.values())
+
+    def split(self, edge):
+        a, b = edge
+        midpoint = (self.vertices[a] + self.vertices[b]) / 2
+        new_vertex = self._append_vertex(midpoint, self.tags[a] & self.tags[b])
+        replacements = {}
+        additions = []
+
+        for index in sorted(self.edge_faces[edge]):
+            original = self.faces[index]
+            replacements[index] = tuple(new_vertex if vertex == b else vertex for vertex in original)
+            additions.append(tuple(new_vertex if vertex == a else vertex for vertex in original))
+
+        self._replace_faces(replacements, additions)
+        # MATLAB's long-edge handling resets edge tags.
+        self.tagged_edges.clear()
+
+    def _pipe_candidates(self, edge):
+        a, b = edge
+        if len(self.edge_faces[edge]) != 2:
+            return []
+
+        shared = set().union(*(self.faces[i] for i in self.edge_faces[edge]))
+        neighbors_a = set().union(*(self.faces[i] for i in self.vertex_faces[a])) - {a, b}
+        neighbors_b = set().union(*(self.faces[i] for i in self.vertex_faces[b])) - {a, b}
+        return sorted((neighbors_a & neighbors_b) - shared)
+
+    def _dissociate_vertex(self, vertex):
+        # Split edge-disconnected face fans, following DissociateMesh(fill=False).
+        indices = sorted(self.vertex_faces[vertex])
+        if not indices:
+            return
+        used = set()
+        replacements = {}
+
+        while len(used) < len(indices):
+            start = next(index for index in indices if index not in used)
+            visited = {start}
+            used.add(start)
+            queue = deque([start])
+
+            while queue:
+                current = queue.popleft()
+                face = self.faces[current]
+                for neighbor in indices:
+                    if neighbor not in used and len(set(face) & set(self.faces[neighbor])) == 2:
+                        used.add(neighbor)
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+
+            if len(used) < len(indices):
+                new_vertex = self._append_vertex(self.vertices[vertex], self.tags[vertex])
+                for index in visited:
+                    replacements[index] = tuple(new_vertex if v == vertex else v for v in self.faces[index])
+
+        if replacements:
+            self._replace_faces(replacements)
+
+    def collapse(self, edge, ignore_pipe=False):
+        a, b = edge
+        touching = self.vertex_faces[a] | self.vertex_faces[b]
+        shared = set(self.edge_faces[edge])
+        con1 = [self.faces[i] for i in touching if i not in shared]
+
+        # Same small tetrahedral-cluster guard as HandleShortEdge.m.
+        if len(con1) == 2 and len(set().union(*con1)) == 4 and sum(a in face for face in con1) == 1 and sum(b in face for face in con1) == 1:
+            self.tagged_edges.add(edge)
+            return "rejected"
+
+        if not ignore_pipe and self._pipe_candidates(edge):
+            return "pipe"
+
+        midpoint = (self.vertices[a] + self.vertices[b]) / 2
+        replacements = {index: None for index in shared}
+        for index in touching - shared:
+            replacements[index] = tuple(a if vertex == b else vertex for vertex in self.faces[index])
+
+        self.vertices[a] = midpoint
+        self.tags[a] |= self.tags[b]
+        self._replace_faces(replacements)
+        self._refresh(set(key for key in self.edge_faces if a in key))
+        self._dissociate_vertex(a)
+        return "collapsed"
+
+    def to_arrays(self):
+        active_faces = np.asarray([face for face in self.faces if face is not None], dtype=np.int64).reshape(-1, 3)
+        used = np.zeros(len(self.vertices), dtype=bool)
+        if len(active_faces):
+            used[active_faces.ravel()] = True
+
+        mapping = np.full(len(used), -1, dtype=np.int64)
+        mapping[used] = np.arange(np.count_nonzero(used))
+        vertices = np.asarray([self.vertices[i] for i in np.flatnonzero(used)], dtype=np.float64).reshape(-1, 3)
+        tags = np.asarray(self.tags, dtype=np.uint8)[used]
+        k1 = np.asarray(self.k1)[used]
+        k2 = np.asarray(self.k2)[used]
+        faces = mapping[active_faces]
+        edge_tags = {tuple(sorted(map(int, mapping[list(edge)]))) for edge in self.tagged_edges if np.all(mapping[list(edge)] >= 0)}
+        return vertices, faces, tags, k1, k2, edge_tags, mapping
 
 @dataclass
 class Surface:
@@ -14,6 +244,9 @@ class Surface:
     _k1: np.ndarray = field(init=False)
     _k2: np.ndarray = field(init=False)
     _boundaries: np.ndarray = field(init=False)
+    _progress: Progress | None = field(init=False, default=None, repr=False)
+    _stage_task: int | None = field(init=False, default=None, repr=False)
+    _stage_initial: int = field(init=False, default=0, repr=False)
 
     def __post_init__(self) -> None:
         self._remove_small_clusters()
@@ -365,78 +598,103 @@ class Surface:
         if not len(self.mesh.edges_unique):
             return
 
-        lengths = self.mesh.edges_unique_length
-        mean = lengths.mean()
+        topology = _DynamicTopology(self)
+        mean = topology.mean_length()
+        initial = topology.remaining(mean / factor, mean * factor)
+        operation_count = 0
 
-        initial = int(np.count_nonzero((lengths < mean / factor) | (lengths > mean * factor)))
-
-        collapsed = 0
-        split = 0
-
-        with Progress(
-            TextColumn("[cyan]Merging/splitting edges:"),
+        # Reuse the smoothing display when available.
+        standalone = self._progress is None
+        context = Progress(
+            TextColumn("[cyan]{task.description}"),
             BarColumn(),
             TextColumn("{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
             console=console,
             transient=True,
-        ) as progress:
-            task = progress.add_task("Adjusting mesh", total=max(initial, 1))
+        ) if standalone else nullcontext(self._progress)
 
-            while True:
-                lengths = self.mesh.edges_unique_length
-                mean = lengths.mean()
+        with context as progress:
+            task = progress.add_task("Merging / splitting edges", total=max(initial, 1), unit="edges")
+
+            while topology.lengths:
+                mean = topology.mean_length()
                 low, high = mean / factor, mean * factor
 
-                # Collapse short edges.
-                while True:
-                    lengths = self.mesh.edges_unique_length
-                    options = np.flatnonzero((lengths < low) & ~self._edge_tagging)
+                # Collapse the shortest eligible edges.
+                while (edge := topology.next_edge(True, low)) is not None:
+                    result = topology.collapse(edge)
 
-                    if not len(options):
-                        break
+                    if result == "pipe":
+                        # Compact vertex IDs before the MATLAB-style pipe procedure.
+                        mapping = self._load_topology(topology)
+                        compacted_edge = mapping[list(edge)]
+                        index = np.flatnonzero(np.all(self.mesh.edges_unique == compacted_edge, axis=1))
 
-                    candidate = int(options[np.argmin(lengths[options])])
-                    before = len(self.mesh.vertices)
-                    self._handle_short_edge(candidate)
+                        if len(index) and self._dissociate_if_pipe(int(index[0])):
+                            topology = _DynamicTopology(self)
+                        else:
+                            # The existing topology still uses the original vertex IDs.
+                            topology.collapse(edge, ignore_pipe=True)
 
-                    if len(self.mesh.vertices) < before:
-                        collapsed += 1
+                    operation_count += 1
+                    if operation_count % 100 == 0:
+                        remaining = topology.remaining(low, high)
+                        progress.update(task, completed=int(np.clip(initial - remaining, 0, max(initial, 1))))
 
-                    now = self.mesh.edges_unique_length
-                    remaining = np.count_nonzero((now < low) | (now > high))
-                    progress.update(task, completed=np.clip(initial - remaining, 0, max(initial, 1)))
-
-                # Split long edges.
+                # Split the longest edges.
                 pass_splits = 0
 
-                while True:
-                    lengths = self.mesh.edges_unique_length
-                    candidate = int(np.argmax(lengths))
-
-                    if lengths[candidate] <= high:
-                        break
-
-                    self._handle_long_edge(candidate)
-                    split += 1
+                while (edge := topology.next_edge(False, high)) is not None:
+                    topology.split(edge)
                     pass_splits += 1
+                    operation_count += 1
 
-                    now = self.mesh.edges_unique_length
-                    remaining = np.count_nonzero((now < low) | (now > high))
-                    progress.update(task, completed=np.clip(initial - remaining, 0, max(initial, 1)))
+                    if operation_count % 100 == 0:
+                        remaining = topology.remaining(low, high)
+                        progress.update(task, completed=int(np.clip(initial - remaining, 0, max(initial, 1))))
 
-                # Stop when no more edges were split.
                 if not pass_splits:
                     break
 
+            self._load_topology(topology)
             self._remove_small_clusters()
             self._back_on_boundary()
             progress.update(task, completed=max(initial, 1))
+            progress.remove_task(task)
 
-        console.print(
-            f"[green]✔[/green] Mesh adjusted: "
-            f"{collapsed:,} collapsed, {split:,} split."
+    def _load_topology(self, topology: _DynamicTopology) -> np.ndarray:
+        vertices, faces, tags, k1, k2, tagged_edges, mapping = topology.to_arrays()
+
+        self.mesh.vertices = vertices
+        self.mesh.faces = faces
+        self.mesh.vertex_attributes["boundary_tag"] = tags
+        self._k1 = k1
+        self._k2 = k2
+        self._edge_tagging = np.array(
+            [tuple(map(int, edge)) in tagged_edges for edge in self.mesh.edges_unique],
+            dtype=bool,
         )
+
+        return mapping
+
+    def _stage_progress(self, remaining: int) -> None:
+        if self._progress is None or self._stage_task is None:
+            return
+
+        total = max(self._stage_initial, 1)
+        completed = int(np.clip(self._stage_initial - remaining, 0, total))
+        self._progress.update(self._stage_task, completed=completed)
+
+    def _run_stage(self, name: str, method, *args) -> None:
+        self._stage_initial = 0
+        self._stage_task = self._progress.add_task(name, total=1, unit="resolved")
+        try:
+            method(*args)
+            self._progress.update(self._stage_task, completed=max(self._stage_initial, 1))
+        finally:
+            self._progress.remove_task(self._stage_task)
+            self._stage_task = None
 
     def _compute_curvatures(self) -> None:
         # Compute mixed Voronoi areas, Gaussian curvature and mean curvature.
@@ -557,15 +815,22 @@ class Surface:
         np.bitwise_or.at(neighbors, edges[:, 1], tags[edges[:, 0]])
         self.mesh.vertex_attributes["boundary_tag"] = tags & neighbors
 
-    def _smooth_peaks(self, k2_max: float, max_iterations: int) -> bool:
+    def _smooth_peaks(self, k2_max: float) -> None:
         # MATLAB SmartSmoothPeeks.m.
-        for _ in range(max_iterations):
+        while True:
             self._compute_curvatures()
             mask = (np.abs(self._k2) > k2_max) & ((self._k1 > 0) == (self._k2 > 0))
             mask = self._extend_mask_to_boundaries(mask)
 
-            if not np.any(mask):
-                return True
+            count = int(np.count_nonzero(mask))
+            if self._stage_initial == 0 and count:
+                self._stage_initial = count
+                if self._stage_task is not None:
+                    self._progress.update(self._stage_task, total=count)
+            self._stage_progress(count)
+
+            if not count:
+                return
 
             self._smooth_mesh(mask)
             self._back_on_boundary()
@@ -573,11 +838,9 @@ class Surface:
             self._compute_curvatures()
             self._correct_boundary_tagging()
 
-        return False
-
-    def _swell_saddles(self, k2_max: float, max_iterations: int) -> bool:
+    def _swell_saddles(self, k2_max: float) -> None:
         # MATLAB SmartSwellSadel.m.
-        for _ in range(max_iterations):
+        while True:
             self._compute_curvatures()
             saddle = (self._k1 > 0) != (self._k2 > 0)
             mask1 = self._extend_mask_to_boundaries((self._k2 > k2_max) & saddle)
@@ -586,25 +849,37 @@ class Surface:
             mask1 &= ~overlapping
             mask2 &= ~overlapping
 
-            if not np.any(mask1 | mask2):
-                return True
+            count = int(np.count_nonzero(mask1 | mask2))
+            if self._stage_initial == 0 and count:
+                self._stage_initial = count
+                if self._stage_task is not None:
+                    self._progress.update(self._stage_task, total=count)
+            self._stage_progress(count)
+
+            if not count:
+                return
 
             self._swell_mesh(mask1, -0.1)
             self._swell_mesh(mask2, 0.1)
             self._back_on_boundary()
             self._merge_split_by_length()
 
-        return False
-
-    def _surround_swelling(self, k1_max: float, k2_max: float, max_iterations: int) -> bool:
+    def _surround_swelling(self, k1_max: float, k2_max: float) -> None:
         # MATLAB SurroundSwelling.m: swell neighbors and smooth problem vertices.
-        for _ in range(max_iterations):
+        while True:
             self._compute_curvatures()
             problem = (np.abs(self._k1) > k1_max) & (np.abs(self._k2) < k2_max)
             problem = self._extend_mask_to_boundaries(problem)
 
-            if not np.any(problem):
-                return True
+            count = int(np.count_nonzero(problem))
+            if self._stage_initial == 0 and count:
+                self._stage_initial = count
+                if self._stage_task is not None:
+                    self._progress.update(self._stage_task, total=count)
+            self._stage_progress(count)
+
+            if not count:
+                return
 
             faces = np.asarray(self.mesh.faces)
             curved = np.flatnonzero(problem)
@@ -621,55 +896,43 @@ class Surface:
             self._back_on_boundary()
             self._merge_split_by_length()
 
-        return False
-
-    def locally_smooth(self, k1_max: float, k2_max: float, max_iterations: int = 100, max_stage_iterations: int = 100) -> bool:
-        # Main smoothing loop corresponding to LocalSmoothing.m.
+    def locally_smooth(self, k1_max: float, k2_max: float) -> bool:
         if k1_max <= 0 or k2_max <= 0:
             raise ValueError("Curvature limits must be positive.")
 
         self._compute_curvatures()
 
         with Progress(
-            TextColumn("[cyan]Curvature-driven smoothing:"),
+            TextColumn("[cyan]{task.description}"),
             BarColumn(),
-            TextColumn("{task.completed:,.0f}/{task.total:,.0f} iterations"),
+            TextColumn("{task.completed:,.0f} {task.fields[unit]}"),
             TimeElapsedColumn(),
             console=console,
             transient=True,
         ) as progress:
-            task = progress.add_task("Smoothing", total=max_iterations)
+            self._progress = progress
+            iteration_task = progress.add_task("Curvature smoothing", total=None, unit="iterations")
 
-            for iteration in range(max_iterations):
-                problem = (np.abs(self._k1) > k1_max) | (np.abs(self._k2) > k2_max)
-                if not np.any(problem):
-                    return True
+            try:
+                while np.any((np.abs(self._k1) > k1_max) | (np.abs(self._k2) > k2_max)):
+                    previous_vertices = np.asarray(self.mesh.vertices).copy()
+                    previous_faces = np.asarray(self.mesh.faces).copy()
 
-                previous_vertices = np.asarray(self.mesh.vertices).copy()
-                previous_faces = np.asarray(self.mesh.faces).copy()
+                    # MATLAB smoothing order: peaks, saddles, surrounding swelling.
+                    self._run_stage("Smoothing curvature peaks", self._smooth_peaks, k2_max)
+                    self._run_stage("Swelling saddle regions", self._swell_saddles, k2_max)
+                    self._run_stage("Swelling surrounding regions", self._surround_swelling, k1_max, k2_max)
 
-                # MATLAB smoothing order: peaks, saddle swelling, surrounding swelling.
-                if not self._smooth_peaks(k2_max, max_stage_iterations):
-                    console.print("[yellow]Peak smoothing reached the iteration limit.[/yellow]")
-                    return False
+                    self._compute_curvatures()
+                    progress.advance(iteration_task)
 
-                if not self._swell_saddles(k2_max, max_stage_iterations):
-                    console.print("[yellow]Saddle swelling reached the iteration limit.[/yellow]")
-                    return False
+                    lengths = self.mesh.edges_unique_length
+                    unchanged = np.array_equal(previous_faces, self.mesh.faces) and previous_vertices.shape == self.mesh.vertices.shape
+                    if unchanged and len(lengths) and np.all(np.abs(previous_vertices - self.mesh.vertices) < 0.001 * lengths.min()):
+                        console.print("[yellow]Smoothing stagnated; MATLAB's corrective pipe search is not yet translated.[/yellow]")
+                        return False
+            finally:
+                self._progress = None
+                self._stage_task = None
 
-                if not self._surround_swelling(k1_max, k2_max, max_stage_iterations):
-                    console.print("[yellow]Surround swelling reached the iteration limit.[/yellow]")
-                    return False
-
-                self._compute_curvatures()
-                progress.advance(task)
-
-                # MATLAB invokes CorrectiveMeasure if the mesh ceases to change.
-                lengths = self.mesh.edges_unique_length
-                unchanged = (np.array_equal(previous_faces, self.mesh.faces) and previous_vertices.shape == self.mesh.vertices.shape)
-                if unchanged and len(lengths) and np.all(np.abs(previous_vertices - self.mesh.vertices) < 0.001 * lengths.min()):
-                    console.print("[yellow]Smoothing stagnated; MATLAB's corrective pipe search is not yet translated.[/yellow]")
-                    return False
-
-        self._compute_curvatures()
-        return not np.any((np.abs(self._k1) > k1_max) | (np.abs(self._k2) > k2_max))
+        return True
