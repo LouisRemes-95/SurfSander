@@ -29,7 +29,7 @@ def build_parser() -> RichArgumentParser:
         "input",
         type=Path,
         default=None,
-        help="Path to the input triangulation or voxelisation",
+        help="Path to the input voxelisation in .npz file",
     )
     parser.add_argument(
         "-o",
