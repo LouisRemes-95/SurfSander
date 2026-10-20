@@ -279,7 +279,8 @@ class Surface:
 
     def __post_init__(self) -> None:
         self._remove_small_clusters()
-        self._boundaries = self.mesh.bounds.copy()
+        domain_boundaries = self.mesh.metadata.get("domain boundaries")
+        self._boundaries = np.asarray(domain_boundaries if domain_boundaries is not None else self.mesh.bounds, dtype=float).copy()
         self._set_boundaries()
 
         n_vertices = len(self.mesh.vertices)
@@ -292,11 +293,12 @@ class Surface:
     def _set_boundaries(self) -> None:
         vertices = np.asarray(self.mesh.vertices)
         bounds = self._boundaries
+        tolerance = 0.1 * float(self.mesh.metadata.get("voxel_size", 0.0))
 
         tags = np.zeros(len(vertices), dtype=np.uint8)
         for axis in range(3):
-            tags |= ((vertices[:, axis] == bounds[0, axis]).astype(np.uint8) << (2 * axis))
-            tags |= ((vertices[:, axis] == bounds[1, axis]).astype(np.uint8) << (2 * axis + 1))
+            tags |= (np.isclose(vertices[:, axis], bounds[0, axis], rtol=0, atol=tolerance).astype(np.uint8) << (2 * axis))
+            tags |= (np.isclose(vertices[:, axis], bounds[1, axis], rtol=0, atol=tolerance).astype(np.uint8) << (2 * axis + 1))
 
         self.mesh.vertex_attributes["boundary_tag"] = tags
 

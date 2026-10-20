@@ -40,6 +40,7 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
             zoom_factor = k_max * alg_config.voxel_size / 2
 
     voxelisation = zoom(voxelisation, zoom_factor, order=1)
+    domain_boundaries = np.array([np.zeros(3), (np.array(voxelisation.shape) - 1) * alg_config.voxel_size / zoom_factor])
 
     threshold = threshold_otsu(voxelisation)
     binary = voxelisation > threshold
@@ -55,11 +56,15 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
         allow_degenerate=False,
     )
 
-    return trimesh.Trimesh(
-        vertices=vertices,
-        faces=faces,
-        process=False,
-    )
+    mesh  = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    mesh.metadata["domain boundaries"] = domain_boundaries
+    mesh.metadata["voxel_size"] = alg_config.voxel_size
+
+    print(domain_boundaries)
+    print(np.min(vertices, axis=0))
+    print(np.max(vertices, axis=0))
+
+    return mesh
 
 
 def _load_voxelisation(input_path: Path) -> np.ndarray:
@@ -87,7 +92,13 @@ def run(alg_config: AlgConfig) -> int:
     )
 
     with console.status("Writing outputs..."):
-        surface.mesh.export(alg_config.output_path)
+        domain_boundaries = surface.mesh.metadata["domain boundaries"]
+
+        ply = surface.mesh.export(file_type="ply")
+        comment = "comment domain boundaries " + " ".join(f"{v:.17g}" for v in domain_boundaries.ravel()) + "\n"
+        ply = ply.replace(b"end_header\n", comment.encode("ascii") + b"end_header\n", 1)
+
+        alg_config.output_path.write_bytes(ply)
 
     try:
         rel = alg_config.output_path.relative_to(Path.cwd())

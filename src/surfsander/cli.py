@@ -55,13 +55,13 @@ def build_parser() -> RichArgumentParser:
         "--k1-max",
         type=float,
         default=None,
-        help="Maximum allowed K1 curvature \[mm⁻¹] (default: None)",
+        help="Maximum allowed K1 curvature in mm⁻¹ (default: None)",
     )
     parser.add_argument(
         "--k2-max",
         type=float,
         default=None,
-        help="Maximum allowed K2 curvature \[mm⁻¹] (default: None)",
+        help="Maximum allowed K2 curvature in mm⁻¹ (default: None)",
     )
     parser.add_argument(
         "--adaptive-zoom",
