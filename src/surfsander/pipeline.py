@@ -7,7 +7,7 @@ import numpy as np
 import trimesh
 from skimage.filters import threshold_otsu
 from skimage.measure import marching_cubes
-from scipy.ndimage import zoom
+from scipy.ndimage import zoom, gaussian_filter
 
 from surfsander.common import UserError, console
 from surfsander.surface import Surface
@@ -45,8 +45,10 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
     binary = voxelisation > threshold_otsu(voxelisation)
     well_composed_binary, _ = make_well_composed(binary)
 
+    smoothed = gaussian_filter(well_composed_binary.astype(np.float32), sigma=1.0)
+
     vertices, faces, _, _ = marching_cubes(
-        well_composed_binary,
+        smoothed,
         level=.5,
         spacing=(alg_config.voxel_size / zoom_factor,) * 3,
         allow_degenerate=False,
