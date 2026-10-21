@@ -42,27 +42,25 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
     voxelisation = zoom(voxelisation, zoom_factor, order=1)
     domain_boundaries = np.array([np.zeros(3), (np.array(voxelisation.shape) - 1) * alg_config.voxel_size / zoom_factor])
 
-    threshold = threshold_otsu(voxelisation)
-    binary = voxelisation > threshold
+    binary = voxelisation > threshold_otsu(voxelisation)
     well_composed_binary, _ = make_well_composed(binary)
 
-    voxelisation[well_composed_binary & ~ binary] = threshold * 1.01
-    voxelisation[~ well_composed_binary & binary] = threshold * .99
-
     vertices, faces, _, _ = marching_cubes(
-        voxelisation,
-        level=threshold,
+        well_composed_binary,
+        level=.5,
         spacing=(alg_config.voxel_size / zoom_factor,) * 3,
         allow_degenerate=False,
     )
 
     mesh  = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+
+    edges = np.sort(mesh.edges, axis=1)
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+    nonmanifold_edges = unique_edges[counts > 2]
+    print(f"Non-manifold edges: {len(nonmanifold_edges)}")
+
     mesh.metadata["domain boundaries"] = domain_boundaries
     mesh.metadata["voxel_size"] = alg_config.voxel_size
-
-    print(domain_boundaries)
-    print(np.min(vertices, axis=0))
-    print(np.max(vertices, axis=0))
 
     return mesh
 
