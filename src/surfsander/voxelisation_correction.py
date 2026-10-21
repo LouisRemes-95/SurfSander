@@ -1,4 +1,3 @@
-
 from collections import deque
 from collections.abc import Callable
 from heapq import heapify, heappop, heappush
@@ -9,10 +8,10 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from surfsander.common import console
 
-
 # --------------------------------------------------
 # 1. Lookup tables
 # --------------------------------------------------
+
 
 def make_lut(n_bits: int, is_critical: Callable[[int], bool]) -> np.ndarray:
     critical = np.array([is_critical(p) for p in range(1 << n_bits)], dtype=np.int8)
@@ -43,6 +42,7 @@ C2_LUT = make_lut(8, is_critical_c2)
 # 2. Configuration offsets
 # --------------------------------------------------
 
+
 def configurations():
     for axis_a, axis_b in ((0, 1), (0, 2), (1, 2)):
         offsets = []
@@ -64,6 +64,7 @@ CONFIGS = tuple(configurations())
 # --------------------------------------------------
 # 3. Configuration counting and initial scores
 # --------------------------------------------------
+
 
 def compute_patterns(volume: np.ndarray, offsets: list[tuple[int, int, int]]) -> np.ndarray:
     extent = np.max(offsets, axis=0)
@@ -116,6 +117,7 @@ def compute_flip_scores(volume: np.ndarray) -> np.ndarray:
 # 4. Local configuration and flip score
 # --------------------------------------------------
 
+
 def configuration_pattern(
     volume: np.ndarray,
     origin: tuple[int, int, int],
@@ -151,6 +153,7 @@ def compute_flip_score(volume: np.ndarray, p: tuple[int, int, int]) -> int:
 # --------------------------------------------------
 # 5. Guaranteed addition-only repair
 # --------------------------------------------------
+
 
 def finish_well_composedness(volume: np.ndarray) -> int:
     queue = deque()
@@ -226,6 +229,7 @@ def finish_well_composedness(volume: np.ndarray) -> int:
 # 6. Complete well-composedness correction
 # --------------------------------------------------
 
+
 def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
     volume = np.asarray(volume, dtype=bool).copy()
 
@@ -254,7 +258,6 @@ def make_well_composed(volume: np.ndarray) -> tuple[np.ndarray, int]:
         console=console,
         transient=True,
     ) as progress:
-
         task = progress.add_task("correct", total=n_initial)
 
         while heap:

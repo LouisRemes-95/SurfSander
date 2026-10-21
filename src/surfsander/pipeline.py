@@ -1,13 +1,11 @@
-import sys
-from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 import trimesh
+from scipy.ndimage import gaussian_filter, zoom
 from skimage.filters import threshold_otsu
 from skimage.measure import marching_cubes
-from scipy.ndimage import zoom
 
 from surfsander.common import UserError, console
 from surfsander.surface import Surface
@@ -40,19 +38,26 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
             zoom_factor = k_max * alg_config.voxel_size / 2
 
     voxelisation = zoom(voxelisation, zoom_factor, order=1)
-    domain_boundaries = np.array([np.zeros(3), (np.array(voxelisation.shape) - 1) * alg_config.voxel_size / zoom_factor])
+    domain_boundaries = np.array(
+        [
+            np.zeros(3),
+            (np.array(voxelisation.shape) - 1) * alg_config.voxel_size / zoom_factor,
+        ]
+    )
 
     binary = voxelisation > threshold_otsu(voxelisation)
     well_composed_binary, _ = make_well_composed(binary)
 
+    smoothed = gaussian_filter(well_composed_binary.astype(np.float32), sigma=1.0)
+
     vertices, faces, _, _ = marching_cubes(
-        well_composed_binary,
-        level=.5,
+        smoothed,
+        level=0.5,
         spacing=(alg_config.voxel_size / zoom_factor,) * 3,
         allow_degenerate=False,
     )
 
-    mesh  = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
     edges = np.sort(mesh.edges, axis=1)
     unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
@@ -68,11 +73,11 @@ def build_iso_surface(alg_config: AlgConfig) -> trimesh:
 def _load_voxelisation(input_path: Path) -> np.ndarray:
     if input_path.suffix != ".npz":
         raise UserError("Only supports .npz files")
-    
+
     with np.load(input_path) as data:
         if len(data.files) != 1:
             raise UserError(f"Expected a single array in '{input_path}', found {len(data.files)}: {data.files}")
-        
+
         voxelisation = data[data.files[0]]
 
     if voxelisation.ndim != 3:
@@ -103,5 +108,5 @@ def run(alg_config: AlgConfig) -> int:
     except ValueError:
         rel = alg_config.output_path  # fallback to absolute path
     console.print(f"💾 Wrote {rel} as output", highlight=False)
-    
+
     return 0

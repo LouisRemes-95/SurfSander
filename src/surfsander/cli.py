@@ -1,15 +1,16 @@
-import sys
 import argparse
+import sys
 from pathlib import Path
 
-from rich.traceback import install
 from rich.panel import Panel
+from rich.traceback import install
 from rich_argparse import RichHelpFormatter
-
-install(show_locals=True)
 
 from surfsander.common import UserError, console
 from surfsander.pipeline import AlgConfig, run
+
+install(show_locals=True)
+
 
 class RichArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
@@ -23,10 +24,11 @@ def build_parser() -> RichArgumentParser:
         prog="SurfSander",
         description="Local curvature based surface triangulation smoothing module",
         formatter_class=RichHelpFormatter,
+        allow_abbrev=False,
     )
 
     parser.add_argument(
-        "input",
+        "input_path",
         type=Path,
         default=None,
         help="Path to the input voxelisation in .npz file",
@@ -39,8 +41,8 @@ def build_parser() -> RichArgumentParser:
         help="Path to the directory where outputs should be saved",
     )
     parser.add_argument(
-        "-n",
-        "--name",
+        "-on",
+        "--output-name",
         type=str,
         default=None,
         help="Name of the output file without suffix",
@@ -67,7 +69,7 @@ def build_parser() -> RichArgumentParser:
         "--adaptive-zoom",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Adaptive zooming on the voxelisation (default: adaptive)",
+        help="Adaptive zooming on the voxelisation (default: True)",
     )
 
     return parser
@@ -79,15 +81,16 @@ def resolve_input(path: Path) -> Path:
         raise UserError("input_path must be an existing file")
     return path
 
-def resolve_output(input_path: Path, output_dir: Path | None, name: str | None) -> Path:
-    output_dir = (output_dir or input_path.parent).resolve()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+def resolve_output(input_path: Path, dir: Path | None, name: str | None) -> Path:
+    dir = (dir or input_path.parent).resolve()
+
+    dir.mkdir(parents=True, exist_ok=True)
 
     if name is None:
         name = input_path.name.removesuffix("".join(input_path.suffixes))
 
-    return (output_dir / name).with_suffix(".ply")
+    return (dir / name).with_suffix(".ply")
 
 
 def main() -> int:
@@ -95,8 +98,7 @@ def main() -> int:
 
     console.print(
         Panel(
-            "[bold cyan]SurfSander[/bold cyan]\n"
-            "Curvature-driven surface smoothing",
+            "[bold cyan]SurfSander[/bold cyan]\nCurvature-driven surface smoothing",
             border_style="cyan",
             expand=False,
         )
@@ -105,16 +107,23 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        input_path = resolve_input(args.input)
-        output_path = resolve_output(input_path, args.output_dir, args.name)
+        input_path = resolve_input(args.input_path)
+        output_path = resolve_output(input_path, args.output_dir, args.output_name)
 
-        alg_config = AlgConfig(input_path, output_path, args.voxel_size, args.k1_max, args.k2_max, args.adaptive_zoom)
+        alg_config = AlgConfig(
+            input_path,
+            output_path,
+            args.voxel_size,
+            args.k1_max,
+            args.k2_max,
+            args.adaptive_zoom,
+        )
 
         return run(alg_config)
 
     except UserError as e:
         console.print(f"[bold red]✖ Error:[/bold red] {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

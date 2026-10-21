@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import trimesh
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, TextColumn
 
 from surfsander.common import console
 
@@ -19,7 +19,7 @@ class CustomBarColumn(BarColumn):
             self.complete_style = "blue"
             self.pulse_style = "blue"
         return super().render(task)
-    
+
 
 class _DynamicTopology:
     """Mutable triangle connectivity for local split/collapse operations.
@@ -37,7 +37,11 @@ class _DynamicTopology:
 
         self.vertex_faces = [set() for _ in self.vertices]
         self.edge_faces = defaultdict(set)
-        self.tagged_edges = {tuple(map(int, edge)) for edge, tagged in zip(surface.mesh.edges_unique, surface._edge_tagging) if tagged}
+        self.tagged_edges = {
+            tuple(map(int, edge))
+            for edge, tagged in zip(surface.mesh.edges_unique, surface._edge_tagging, strict=True)
+            if tagged
+        }
         self.parked_edges = set()
         self.lengths = {}
         self.versions = defaultdict(int)
@@ -188,8 +192,14 @@ class _DynamicTopology:
             return []
 
         shared = set().union(*(self.faces[i] for i in self.edge_faces[edge]))
-        neighbors_a = set().union(*(self.faces[i] for i in self.vertex_faces[a])) - {a, b}
-        neighbors_b = set().union(*(self.faces[i] for i in self.vertex_faces[b])) - {a, b}
+        neighbors_a = set().union(*(self.faces[i] for i in self.vertex_faces[a])) - {
+            a,
+            b,
+        }
+        neighbors_b = set().union(*(self.faces[i] for i in self.vertex_faces[b])) - {
+            a,
+            b,
+        }
         return sorted((neighbors_a & neighbors_b) - shared)
 
     def _dissociate_vertex(self, vertex):
@@ -230,7 +240,12 @@ class _DynamicTopology:
         con1 = [self.faces[i] for i in touching if i not in shared]
 
         # Same small tetrahedral-cluster guard as HandleShortEdge.m.
-        if len(con1) == 2 and len(set().union(*con1)) == 4 and sum(a in face for face in con1) == 1 and sum(b in face for face in con1) == 1:
+        if (
+            len(con1) == 2
+            and len(set().union(*con1)) == 4
+            and sum(a in face for face in con1) == 1
+            and sum(b in face for face in con1) == 1
+        ):
             self.tagged_edges.add(edge)
             return "rejected"
 
@@ -262,8 +277,13 @@ class _DynamicTopology:
         k1 = np.asarray(self.k1)[used]
         k2 = np.asarray(self.k2)[used]
         faces = mapping[active_faces]
-        edge_tags = {tuple(sorted(map(int, mapping[list(edge)]))) for edge in self.tagged_edges if np.all(mapping[list(edge)] >= 0)}
+        edge_tags = {
+            tuple(sorted(map(int, mapping[list(edge)])))
+            for edge in self.tagged_edges
+            if np.all(mapping[list(edge)] >= 0)
+        }
         return vertices, faces, tags, k1, k2, edge_tags, mapping
+
 
 @dataclass
 class Surface:
@@ -280,7 +300,10 @@ class Surface:
     def __post_init__(self) -> None:
         self._remove_small_clusters()
         domain_boundaries = self.mesh.metadata.get("domain boundaries")
-        self._boundaries = np.asarray(domain_boundaries if domain_boundaries is not None else self.mesh.bounds, dtype=float).copy()
+        self._boundaries = np.asarray(
+            domain_boundaries if domain_boundaries is not None else self.mesh.bounds,
+            dtype=float,
+        ).copy()
         self._set_boundaries()
 
         n_vertices = len(self.mesh.vertices)
@@ -297,8 +320,12 @@ class Surface:
 
         tags = np.zeros(len(vertices), dtype=np.uint8)
         for axis in range(3):
-            tags |= (np.isclose(vertices[:, axis], bounds[0, axis], rtol=0, atol=tolerance).astype(np.uint8) << (2 * axis))
-            tags |= (np.isclose(vertices[:, axis], bounds[1, axis], rtol=0, atol=tolerance).astype(np.uint8) << (2 * axis + 1))
+            tags |= np.isclose(vertices[:, axis], bounds[0, axis], rtol=0, atol=tolerance).astype(np.uint8) << (
+                2 * axis
+            )
+            tags |= np.isclose(vertices[:, axis], bounds[1, axis], rtol=0, atol=tolerance).astype(np.uint8) << (
+                2 * axis + 1
+            )
 
         self.mesh.vertex_attributes["boundary_tag"] = tags
 
@@ -354,7 +381,7 @@ class Surface:
             self._edge_tagging = np.zeros(len(self.mesh.edges_unique), dtype=bool)
         else:
             # Preserve tags on surviving *unchanged* edges; new edges untagged.
-            tagged = {tuple(edge) for edge, flag in zip(old_edges, old_edge_tags) if flag}
+            tagged = {tuple(edge) for edge, flag in zip(old_edges, old_edge_tags, strict=True) if flag}
             self._edge_tagging = np.array([tuple(edge) in tagged for edge in self.mesh.edges_unique], dtype=bool)
 
     def _find_pipe_cycle(self, selection: list[int]) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
@@ -378,7 +405,10 @@ class Surface:
 
                 # Find edge-adjacent faces without crossing the empty triangle.
                 similar = np.isin(surrounding_faces, surrounding_faces[current])
-                adjacent = np.flatnonzero((similar.sum(axis=1) == 2) & ((similar & np.isin(surrounding_faces, selected_vertices)).sum(axis=1) != 2))
+                adjacent = np.flatnonzero(
+                    (similar.sum(axis=1) == 2)
+                    & ((similar & np.isin(surrounding_faces, selected_vertices)).sum(axis=1) != 2)
+                )
 
                 # MATLAB tests adjacency before discarding already-used faces.
                 if len(adjacent) < 2:
@@ -454,7 +484,10 @@ class Surface:
                     while analysed_faces:
                         current = analysed_faces.pop(0)
                         similar = np.isin(surrounding_faces, surrounding_faces[current])
-                        adjacent = np.flatnonzero((similar.sum(axis=1) == 2) & ((similar & np.isin(surrounding_faces, remaining)).sum(axis=1) != 2))
+                        adjacent = np.flatnonzero(
+                            (similar.sum(axis=1) == 2)
+                            & ((similar & np.isin(surrounding_faces, remaining)).sum(axis=1) != 2)
+                        )
                         adjacent = adjacent[~used[adjacent]]
                         analysed_faces.extend(adjacent.tolist())
                         used[adjacent] = True
@@ -593,9 +626,7 @@ class Surface:
         updated[shared] = replacement
 
         # Update geometry and connectivity.
-        vertices = np.vstack(
-            (self.mesh.vertices, (self.mesh.vertices[v1] + self.mesh.vertices[v2]) / 2)
-        )
+        vertices = np.vstack((self.mesh.vertices, (self.mesh.vertices[v1] + self.mesh.vertices[v2]) / 2))
         # Propagate boundary tagging and initialize new curvature values.
         tags = np.asarray(self.mesh.vertex_attributes["boundary_tag"])
         self._commit(
@@ -636,18 +667,22 @@ class Surface:
 
         # Reuse the smoothing display when available.
         standalone = self._progress is None
-        context = Progress(
-            TextColumn("{task.description}"),
-            BarColumn(
-                complete_style="blue",
-                finished_style="blue",
-                pulse_style="blue",
-            ),
-            TextColumn("{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            console=console,
-            transient=True,
-        ) if standalone else nullcontext(self._progress)
+        context = (
+            Progress(
+                TextColumn("{task.description}"),
+                BarColumn(
+                    complete_style="blue",
+                    finished_style="blue",
+                    pulse_style="blue",
+                ),
+                TextColumn("{task.percentage:>3.0f}%"),
+                TextColumn("[white]{task.elapsed:0.1f}s"),
+                console=console,
+                transient=True,
+            )
+            if standalone
+            else nullcontext(self._progress)
+        )
 
         with context as progress:
             task = progress.add_task("Merging / splitting edges", total=max(initial, 1), unit="edges")
@@ -675,7 +710,10 @@ class Surface:
                     operation_count += 1
                     if operation_count % 100 == 0:
                         remaining = topology.remaining(low, high)
-                        progress.update(task, completed=int(np.clip(initial - remaining, 0, max(initial, 1))))
+                        progress.update(
+                            task,
+                            completed=int(np.clip(initial - remaining, 0, max(initial, 1))),
+                        )
 
                 # Split the longest edges.
                 pass_splits = 0
@@ -687,7 +725,10 @@ class Surface:
 
                     if operation_count % 100 == 0:
                         remaining = topology.remaining(low, high)
-                        progress.update(task, completed=int(np.clip(initial - remaining, 0, max(initial, 1))))
+                        progress.update(
+                            task,
+                            completed=int(np.clip(initial - remaining, 0, max(initial, 1))),
+                        )
 
                 if not pass_splits:
                     break
@@ -756,12 +797,16 @@ class Surface:
         obtuse_angles = angles > np.pi / 2
         obtuse_faces = np.any(obtuse_angles, axis=1)
 
-        length_next = np.sum(edge_next ** 2, axis=2)
-        length_prev = np.sum(edge_prev ** 2, axis=2)
+        length_next = np.sum(edge_next**2, axis=2)
+        length_prev = np.sum(edge_prev**2, axis=2)
 
         # Mixed Voronoi cell area: acute cotangent formula, obtuse area splitting.
         mixed = (np.roll(cotangents, -1, axis=1) * length_prev + np.roll(cotangents, 1, axis=1) * length_next) / 8
-        mixed = np.where(obtuse_faces[:, None], np.where(obtuse_angles, areas[:, None] / 2, areas[:, None] / 4), mixed)
+        mixed = np.where(
+            obtuse_faces[:, None],
+            np.where(obtuse_angles, areas[:, None] / 2, areas[:, None] / 4),
+            mixed,
+        )
 
         vertex_area = np.zeros(n_vertices, dtype=np.float64)
         angle_sum = np.zeros(n_vertices, dtype=np.float64)
@@ -769,12 +814,25 @@ class Surface:
         np.add.at(angle_sum, faces.ravel(), angles.ravel())
 
         # Cotangent Laplacian, accumulated by triangle corner.
-        laplace_corner = (np.roll(cotangents, -1, axis=1)[:, :, None] * edge_prev + np.roll(cotangents, 1, axis=1)[:, :, None] * edge_next)
+        laplace_corner = (
+            np.roll(cotangents, -1, axis=1)[:, :, None] * edge_prev
+            + np.roll(cotangents, 1, axis=1)[:, :, None] * edge_next
+        )
         laplace = np.zeros((n_vertices, 3), dtype=np.float64)
         np.add.at(laplace, faces.ravel(), laplace_corner.reshape(-1, 3))
-        laplace = np.divide(laplace, 2 * vertex_area[:, None], out=np.zeros_like(laplace), where=vertex_area[:, None] > 0)
+        laplace = np.divide(
+            laplace,
+            2 * vertex_area[:, None],
+            out=np.zeros_like(laplace),
+            where=vertex_area[:, None] > 0,
+        )
 
-        gaussian = np.divide(2 * np.pi - angle_sum, vertex_area, out=np.zeros(n_vertices), where=vertex_area > 0)
+        gaussian = np.divide(
+            2 * np.pi - angle_sum,
+            vertex_area,
+            out=np.zeros(n_vertices),
+            where=vertex_area > 0,
+        )
         mean_absolute = np.linalg.norm(laplace, axis=1) / 2
 
         # As in MATLAB, boundary vertices have zero curvature.
@@ -784,7 +842,7 @@ class Surface:
 
         normals = self.mesh.vertex_normals
         mean = np.where(np.sum(normals * -laplace, axis=1) < 0, -mean_absolute, mean_absolute)
-        roots = np.sqrt(np.maximum(mean ** 2 - gaussian, 0))
+        roots = np.sqrt(np.maximum(mean**2 - gaussian, 0))
 
         k1 = mean + roots
         k2 = mean - roots
@@ -839,7 +897,9 @@ class Surface:
             return
 
         normals = self.mesh.vertex_normals
-        self.mesh.vertices = np.asarray(self.mesh.vertices) + factor * lengths.mean() * normals * np.asarray(mask)[:, None]
+        self.mesh.vertices = (
+            np.asarray(self.mesh.vertices) + factor * lengths.mean() * normals * np.asarray(mask)[:, None]
+        )
 
     def _correct_boundary_tagging(self) -> None:
         # Drop boundary bits not shared by at least one adjacent vertex.
@@ -945,7 +1005,7 @@ class Surface:
                 pulse_style="blue",
             ),
             TextColumn("{task.completed:,.0f} {task.fields[unit]}"),
-            TimeElapsedColumn(),
+            TextColumn("[white]{task.elapsed:0.1f}s"),
             console=console,
             transient=True,
         ) as progress:
@@ -960,22 +1020,35 @@ class Surface:
                     # MATLAB smoothing order: peaks, saddles, surrounding swelling.
                     self._run_stage("Smoothing curvature peaks", self._smooth_peaks, k2_max)
                     self._run_stage("Swelling saddle regions", self._swell_saddles, k2_max)
-                    self._run_stage("Swelling surrounding regions", self._surround_swelling, k1_max, k2_max)
+                    self._run_stage(
+                        "Swelling surrounding regions",
+                        self._surround_swelling,
+                        k1_max,
+                        k2_max,
+                    )
 
                     self._compute_curvatures()
                     progress.advance(iteration_task)
 
                     lengths = self.mesh.edges_unique_length
-                    unchanged = np.array_equal(previous_faces, self.mesh.faces) and previous_vertices.shape == self.mesh.vertices.shape
-                    if unchanged and len(lengths) and np.all(np.abs(previous_vertices - self.mesh.vertices) < 0.001 * lengths.min()):
-                        console.print("[yellow]Smoothing stagnated; MATLAB's corrective pipe search is not yet translated.[/yellow]")
+                    unchanged = (
+                        np.array_equal(previous_faces, self.mesh.faces)
+                        and previous_vertices.shape == self.mesh.vertices.shape
+                    )
+                    if (
+                        unchanged
+                        and len(lengths)
+                        and np.all(np.abs(previous_vertices - self.mesh.vertices) < 0.001 * lengths.min())
+                    ):
+                        console.print(
+                            "[yellow]Smoothing stagnated; MATLAB's corrective "
+                            "pipe search is not yet translated.[/yellow]"
+                        )
                         return False
             finally:
                 self._progress = None
                 self._stage_task = None
 
         iterations = int(progress.tasks[iteration_task].completed)
-        console.print(
-            f"[green]✔ Local smoothing converged after {iterations:,} full smoothing iterations.[/green]"
-        )
+        console.print(f"[green]✔ Local smoothing converged after {iterations:,} full smoothing iterations.[/green]")
         return True

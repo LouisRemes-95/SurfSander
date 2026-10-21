@@ -3,6 +3,7 @@ name = "surfsander"
 version = "1.1.0"
 description = "Add your description here"
 readme = "README.md"
+license = "GPL-3.0-or-later"
 authors = [
     { name = "Louis Remes", email = "louisremes@gmail.com" }
 ]
@@ -21,3 +22,14 @@ surfsander = "surfsander.cli:main"
 [build-system]
 requires = ["uv_build>=0.9.9,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
